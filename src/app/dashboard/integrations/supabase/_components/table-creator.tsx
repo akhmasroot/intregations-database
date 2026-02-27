@@ -113,9 +113,23 @@ export function TableCreator({ onTableCreated, children }: TableCreatorProps) {
       const result = await response.json();
 
       if (result.success) {
-        toast.success(`Table "${data.tableName}" created successfully!`);
-        setOpen(false);
-        onTableCreated?.(data.tableName);
+        if (result.data?.manualRequired) {
+          // Show the SQL for manual execution
+          toast.info(
+            `Auto-creation failed. Please run this SQL in your Supabase SQL Editor:\n\n${result.data.sql}`,
+            { duration: 10000 }
+          );
+          // Copy SQL to clipboard
+          if (result.data.sql) {
+            navigator.clipboard.writeText(result.data.sql).catch(() => {});
+            toast.success("SQL copied to clipboard! Paste it in Supabase SQL Editor.");
+          }
+          setOpen(false);
+        } else {
+          toast.success(`Table "${data.tableName}" created successfully!`);
+          setOpen(false);
+          onTableCreated?.(data.tableName);
+        }
       } else {
         toast.error(result.error?.message ?? "Failed to create table");
       }

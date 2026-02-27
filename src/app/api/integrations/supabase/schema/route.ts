@@ -129,15 +129,12 @@ export async function POST(request: NextRequest) {
 
     const integration = await validateIntegrationAccess(userId, "supabase");
 
-    if (!integration.supabaseUrl || !integration.supabaseServiceKey) {
+    if (!integration.supabaseUrl) {
       return NextResponse.json(
-        errorResponse("CONFIGURATION_ERROR", "Service Role Key is required to create tables"),
+        errorResponse("CONFIGURATION_ERROR", "Supabase credentials not configured"),
         { status: 400 }
       );
     }
-
-    const url = decrypt(integration.supabaseUrl);
-    const serviceKey = decrypt(integration.supabaseServiceKey);
 
     const body = await request.json();
     const { tableName, columns } = body;
@@ -151,7 +148,7 @@ export async function POST(request: NextRequest) {
 
     // Build CREATE TABLE SQL
     const columnDefs = [
-      "id uuid PRIMARY KEY DEFAULT uuid_generate_v4()",
+      "id uuid PRIMARY KEY DEFAULT gen_random_uuid()",
       "created_at timestamptz DEFAULT now()",
       ...columns.map((col: {
         name: string;
@@ -160,7 +157,7 @@ export async function POST(request: NextRequest) {
         defaultValue?: string;
         isUnique?: boolean;
       }) => {
-        const parts = [`${col.name} ${col.type}`];
+        const parts = [`"${col.name}" ${col.type}`];
         if (!col.nullable) parts.push("NOT NULL");
         if (col.defaultValue) parts.push(`DEFAULT ${col.defaultValue}`);
         if (col.isUnique) parts.push("UNIQUE");
@@ -168,24 +165,58 @@ export async function POST(request: NextRequest) {
       }),
     ];
 
-    const sql = `CREATE TABLE ${tableName} (\n  ${columnDefs.join(",\n  ")}\n);`;
+    const sql = `CREATE TABLE IF NOT EXISTS "${tableName}" (\n  ${columnDefs.join(",\n  ")}\n);`;
 
-    // Execute via Supabase SQL API (requires service key)
-    const sqlResponse = await fetch(`${url}/rest/v1/rpc/exec_sql`, {
-      method: "POST",
-      headers: {
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query: sql }),
-    });
+    // Extract project ref from URL to use Management API
+    const url = decrypt(integration.supabaseUrl);
+    const projectRef = url.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1];
 
-    if (!sqlResponse.ok) {
-      const errText = await sqlResponse.text();
+    if (!projectRef) {
       return NextResponse.json(
-        errorResponse("QUERY_ERROR", `Failed to create table: ${errText}`),
+        errorResponse("CONFIGURATION_ERROR", "Could not extract project reference from URL"),
         { status: 400 }
+      );
+    }
+
+    // Use Supabase Management API to run SQL
+    // This requires a service key or management API token
+    const serviceKey = integration.supabaseServiceKey
+      ? decrypt(integration.supabaseServiceKey)
+      : integration.supabaseAnonKey
+        ? decrypt(integration.supabaseAnonKey)
+        : null;
+
+    if (!serviceKey) {
+      return NextResponse.json(
+        errorResponse("CONFIGURATION_ERROR", "API key not configured"),
+        { status: 400 }
+      );
+    }
+
+    // Try Supabase Management API
+    const mgmtResponse = await fetch(
+      `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: sql }),
+      }
+    );
+
+    if (!mgmtResponse.ok) {
+      const errData = await mgmtResponse.json().catch(() => ({ message: "Unknown error" }));
+      
+      // If Management API fails, return the SQL for manual execution
+      return NextResponse.json(
+        successResponse({
+          message: `Table creation via API failed. Please run this SQL manually in your Supabase SQL Editor:`,
+          sql,
+          manualRequired: true,
+          error: errData?.message ?? "Management API not accessible with current credentials",
+        })
       );
     }
 
@@ -198,7 +229,7 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json(
-      successResponse({ message: `Table "${tableName}" created successfully` })
+      successResponse({ message: `Table "${tableName}" created successfully`, sql })
     );
   } catch (error) {
     return NextResponse.json(
