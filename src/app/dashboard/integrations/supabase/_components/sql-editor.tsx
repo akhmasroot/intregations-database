@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 
 interface SqlEditorProps {
   hasServiceKey?: boolean;
+  initialQuery?: string;
 }
 
 interface QueryResult {
@@ -27,9 +28,9 @@ interface QueryResult {
   error?: string;
 }
 
-export function SqlEditor({ hasServiceKey = false }: SqlEditorProps) {
+export function SqlEditor({ hasServiceKey = false, initialQuery }: SqlEditorProps) {
   const [query, setQuery] = useState(
-    "SELECT table_name, table_type\nFROM information_schema.tables\nWHERE table_schema = 'public'\nORDER BY table_name;"
+    initialQuery ?? "SELECT table_name, table_type\nFROM information_schema.tables\nWHERE table_schema = 'public'\nORDER BY table_name;"
   );
   const [result, setResult] = useState<QueryResult | null>(null);
   const [isRunning, setIsRunning] = useState(false);

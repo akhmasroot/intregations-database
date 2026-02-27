@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { decrypt } from "@/lib/integrations/encryption";
 import {
   getCurrentUserId,
@@ -44,6 +45,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const url = decrypt(integration.supabaseUrl);
+    const key = hasServiceKey
+      ? decrypt(integration.supabaseServiceKey!)
+      : decrypt(integration.supabaseAnonKey);
+
     // Security: restrict to SELECT queries if no service key
     const trimmedQuery = query.trim().toUpperCase();
     const isWriteQuery = !trimmedQuery.startsWith("SELECT") &&
@@ -54,117 +60,101 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         errorResponse(
           "UNAUTHORIZED",
-          "Only SELECT queries are allowed without a Service Role Key. Add a Service Role Key to run DDL/DML queries."
+          "DDL queries (CREATE TABLE, ALTER, DROP, etc.) require a Service Role Key. Add your Service Role Key in the connection settings to enable this feature."
         ),
         { status: 403 }
       );
     }
 
-    const url = decrypt(integration.supabaseUrl);
-    const key = hasServiceKey
-      ? decrypt(integration.supabaseServiceKey!)
-      : decrypt(integration.supabaseAnonKey);
-
-    // Extract project ref for Management API
-    const projectRef = url.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1];
-
     const startTime = Date.now();
 
-    // Try Supabase Management API for DDL queries (CREATE, ALTER, DROP, etc.)
-    if (isWriteQuery && projectRef) {
-      const mgmtResponse = await fetch(
-        `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${key}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ query }),
-        }
-      );
-
-      const executionTime = Date.now() - startTime;
-
-      if (mgmtResponse.ok) {
-        const data = await mgmtResponse.json();
-        await logIntegrationOperation({
-          userId,
-          provider: "supabase",
-          action: "query",
-          status: "success",
-          metadata: { executionTime },
-        });
-        return NextResponse.json(
-          successResponse({
-            data: Array.isArray(data) ? data : [data],
-            rowCount: Array.isArray(data) ? data.length : 1,
-            executionTime,
-          })
-        );
-      }
-    }
-
-    // For SELECT queries, use PostgREST with a workaround
-    // Supabase doesn't support raw SQL via PostgREST, but we can use the pg endpoint
-    const pgResponse = await fetch(`${url}/pg/query`, {
-      method: "POST",
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query }),
-    });
-
-    const executionTime = Date.now() - startTime;
-
-    if (pgResponse.ok) {
-      const data = await pgResponse.json();
-      await logIntegrationOperation({
-        userId,
-        provider: "supabase",
-        action: "query",
-        status: "success",
-        metadata: { executionTime },
-      });
-      return NextResponse.json(
-        successResponse({
-          data: Array.isArray(data) ? data : [data],
-          rowCount: Array.isArray(data) ? data.length : 1,
-          executionTime,
-        })
-      );
-    }
-
-    // Last resort: try the REST API with a simple select
-    // For SELECT queries, we can use the Supabase client
-    const { createClient } = await import("@supabase/supabase-js");
+    // Use Supabase client with service key for write operations
     const client = createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    // For simple SELECT queries, try to parse the table name and use the client
-    const tableMatch = query.match(/FROM\s+"?(\w+)"?/i);
-    if (tableMatch && trimmedQuery.startsWith("SELECT")) {
-      const tableName = tableMatch[1];
-      const { data, error } = await client.from(tableName).select("*").limit(100);
+    // For SELECT queries, try to use PostgREST
+    if (!isWriteQuery) {
+      // Try to extract table name and use PostgREST
+      const tableMatch = query.match(/FROM\s+"?(\w+)"?/i);
+      if (tableMatch) {
+        const tableName = tableMatch[1];
+        const { data, error } = await client.from(tableName).select("*").limit(100);
+        const executionTime = Date.now() - startTime;
 
-      if (!error) {
-        return NextResponse.json(
-          successResponse({
-            data: data ?? [],
-            rowCount: data?.length ?? 0,
-            executionTime: Date.now() - startTime,
-          })
-        );
+        if (!error) {
+          await logIntegrationOperation({
+            userId,
+            provider: "supabase",
+            action: "query",
+            status: "success",
+            metadata: { executionTime, rowCount: data?.length ?? 0 },
+          });
+          return NextResponse.json(
+            successResponse({
+              data: data ?? [],
+              rowCount: data?.length ?? 0,
+              executionTime,
+            })
+          );
+        }
       }
     }
+
+    // For DDL/DML with service key, use the Supabase pg endpoint
+    // This endpoint is available on Supabase projects and accepts service key
+    const pgEndpoints = [
+      `${url}/pg/query`,
+      `${url}/rest/v1/rpc/exec_sql`,
+    ];
+
+    for (const endpoint of pgEndpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const executionTime = Date.now() - startTime;
+
+          await logIntegrationOperation({
+            userId,
+            provider: "supabase",
+            action: "query",
+            status: "success",
+            metadata: { executionTime },
+          });
+
+          return NextResponse.json(
+            successResponse({
+              data: Array.isArray(data) ? data : [{ result: "Query executed successfully" }],
+              rowCount: Array.isArray(data) ? data.length : 1,
+              executionTime,
+            })
+          );
+        }
+      } catch {
+        // Try next endpoint
+      }
+    }
+
+    // If all endpoints fail, return a helpful error
+    const executionTime = Date.now() - startTime;
+    void executionTime;
 
     return NextResponse.json(
       errorResponse(
         "QUERY_ERROR",
-        "Could not execute query. For DDL queries (CREATE TABLE, etc.), a Service Role Key with Management API access is required."
+        isWriteQuery
+          ? "DDL query execution failed. Supabase requires the Management API for DDL operations. Please ensure your Service Role Key has the necessary permissions, or use the Supabase SQL Editor directly at supabase.com/dashboard."
+          : "Query execution failed. Please check your query syntax."
       ),
       { status: 400 }
     );
