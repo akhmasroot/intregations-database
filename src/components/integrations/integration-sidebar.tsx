@@ -24,22 +24,31 @@ const navItems = [
     icon: Layers,
     description: "Real-time database",
   },
+  {
+    label: "Turso",
+    href: "/dashboard/integrations/turso",
+    icon: Database,
+    description: "SQLite edge database",
+  },
 ];
 
 interface IntegrationSidebarProps {
   supabaseConnected?: boolean;
   convexConnected?: boolean;
+  tursoConnected?: boolean;
 }
 
 export function IntegrationSidebar({
   supabaseConnected = false,
   convexConnected = false,
+  tursoConnected = false,
 }: IntegrationSidebarProps) {
   const pathname = usePathname();
 
   const connectionStatus: Record<string, boolean> = {
     "/dashboard/integrations/supabase": supabaseConnected,
     "/dashboard/integrations/convex": convexConnected,
+    "/dashboard/integrations/turso": tursoConnected,
   };
 
   return (

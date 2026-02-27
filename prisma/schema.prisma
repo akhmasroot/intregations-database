@@ -26,6 +26,11 @@ model UserIntegration {
   convexDeploymentUrl String?
   convexProjectId     String?
   
+  // Turso fields
+  tursoUrl       String?  // encrypted (libsql URL e.g. libsql://xxx.turso.io)
+  tursoAuthToken String?  // encrypted (Turso auth token)
+  tursoDatabaseName String?
+  
   connectedAt   DateTime  @default(now())
   lastUsedAt    DateTime?
   isActive      Boolean   @default(true)

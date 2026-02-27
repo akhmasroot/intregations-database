@@ -20,25 +20,27 @@ interface IntegrationRecord {
   connectedAt: Date;
   supabaseProjectRef: string | null;
   convexProjectId: string | null;
+  tursoDatabaseName: string | null;
 }
 
 async function getIntegrationStatuses(userId: string) {
   const integrations = await db.userIntegration.findMany({
     where: { userId, isActive: true },
-    select: { provider: true, connectedAt: true, supabaseProjectRef: true, convexProjectId: true },
+    select: { provider: true, connectedAt: true, supabaseProjectRef: true, convexProjectId: true, tursoDatabaseName: true },
   }) as IntegrationRecord[];
 
   const supabase = integrations.find((i) => i.provider === "supabase");
   const convex = integrations.find((i) => i.provider === "convex");
+  const turso = integrations.find((i) => i.provider === "turso");
 
-  return { supabase, convex };
+  return { supabase, convex, turso };
 }
 
 export default async function IntegrationsPage() {
   const userId = await getCurrentUserId();
-  const { supabase, convex } = userId
+  const { supabase, convex, turso } = userId
     ? await getIntegrationStatuses(userId)
-    : { supabase: null, convex: null };
+    : { supabase: null, convex: null, turso: null };
 
   const providers = [
     {
@@ -71,6 +73,21 @@ export default async function IntegrationsPage() {
       badges: ["OAuth"],
       accentColor: "border-orange-500/20 hover:border-orange-500/40",
     },
+    {
+      id: "turso",
+      name: "Turso",
+      description:
+        "SQLite-compatible edge database built on libsql. Fast, lightweight, and perfect for edge deployments.",
+      href: "/dashboard/integrations/turso",
+      icon: Database,
+      iconColor: "text-cyan-400",
+      iconBg: "bg-cyan-500/10",
+      isConnected: !!turso,
+      connectedAt: turso?.connectedAt,
+      features: ["SQLite-compatible", "Edge-ready", "libsql protocol", "Low latency"],
+      badges: ["API Token"],
+      accentColor: "border-cyan-500/20 hover:border-cyan-500/40",
+    },
   ];
 
   return (
@@ -78,6 +95,7 @@ export default async function IntegrationsPage() {
       <IntegrationSidebar
         supabaseConnected={!!supabase}
         convexConnected={!!convex}
+        tursoConnected={!!turso}
       />
 
       <main className="flex-1 p-8">
@@ -110,7 +128,7 @@ export default async function IntegrationsPage() {
         </div>
 
         {/* Provider Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {providers.map((provider) => {
             const Icon = provider.icon;
             return (
@@ -202,7 +220,7 @@ export default async function IntegrationsPage() {
           {[
             {
               label: "Connected Databases",
-              value: [supabase, convex].filter(Boolean).length,
+              value: [supabase, convex, turso].filter(Boolean).length,
               icon: Database,
             },
             {
@@ -212,7 +230,7 @@ export default async function IntegrationsPage() {
             },
             {
               label: "Supported Providers",
-              value: "2",
+              value: "3",
               icon: Layers,
             },
           ].map((stat) => {
