@@ -21,26 +21,28 @@ interface IntegrationRecord {
   supabaseProjectRef: string | null;
   convexProjectId: string | null;
   tursoDatabaseName: string | null;
+  planetscaleDatabaseName: string | null;
 }
 
 async function getIntegrationStatuses(userId: string) {
   const integrations = await db.userIntegration.findMany({
     where: { userId, isActive: true },
-    select: { provider: true, connectedAt: true, supabaseProjectRef: true, convexProjectId: true, tursoDatabaseName: true },
+    select: { provider: true, connectedAt: true, supabaseProjectRef: true, convexProjectId: true, tursoDatabaseName: true, planetscaleDatabaseName: true },
   }) as IntegrationRecord[];
 
   const supabase = integrations.find((i) => i.provider === "supabase");
   const convex = integrations.find((i) => i.provider === "convex");
   const turso = integrations.find((i) => i.provider === "turso");
+  const planetscale = integrations.find((i) => i.provider === "planetscale");
 
-  return { supabase, convex, turso };
+  return { supabase, convex, turso, planetscale };
 }
 
 export default async function IntegrationsPage() {
   const userId = await getCurrentUserId();
-  const { supabase, convex, turso } = userId
+  const { supabase, convex, turso, planetscale } = userId
     ? await getIntegrationStatuses(userId)
-    : { supabase: null, convex: null, turso: null };
+    : { supabase: null, convex: null, turso: null, planetscale: null };
 
   const providers = [
     {
@@ -88,6 +90,21 @@ export default async function IntegrationsPage() {
       badges: ["API Token"],
       accentColor: "border-cyan-500/20 hover:border-cyan-500/40",
     },
+    {
+      id: "planetscale",
+      name: "PlanetScale",
+      description:
+        "MySQL-compatible serverless database platform with branching, non-blocking schema changes, and global replication.",
+      href: "/dashboard/integrations/planetscale",
+      icon: Database,
+      iconColor: "text-purple-400",
+      iconBg: "bg-purple-500/10",
+      isConnected: !!planetscale,
+      connectedAt: planetscale?.connectedAt,
+      features: ["MySQL-compatible", "Serverless", "Schema branching", "Global replication"],
+      badges: ["API Token"],
+      accentColor: "border-purple-500/20 hover:border-purple-500/40",
+    },
   ];
 
   return (
@@ -96,6 +113,7 @@ export default async function IntegrationsPage() {
         supabaseConnected={!!supabase}
         convexConnected={!!convex}
         tursoConnected={!!turso}
+        planetscaleConnected={!!planetscale}
       />
 
       <main className="flex-1 p-8">
@@ -220,7 +238,7 @@ export default async function IntegrationsPage() {
           {[
             {
               label: "Connected Databases",
-              value: [supabase, convex, turso].filter(Boolean).length,
+              value: [supabase, convex, turso, planetscale].filter(Boolean).length,
               icon: Database,
             },
             {
@@ -230,7 +248,7 @@ export default async function IntegrationsPage() {
             },
             {
               label: "Supported Providers",
-              value: "3",
+              value: "4",
               icon: Layers,
             },
           ].map((stat) => {

@@ -30,18 +30,26 @@ const navItems = [
     icon: Database,
     description: "SQLite edge database",
   },
+  {
+    label: "PlanetScale",
+    href: "/dashboard/integrations/planetscale",
+    icon: Database,
+    description: "MySQL-compatible cloud DB",
+  },
 ];
 
 interface IntegrationSidebarProps {
   supabaseConnected?: boolean;
   convexConnected?: boolean;
   tursoConnected?: boolean;
+  planetscaleConnected?: boolean;
 }
 
 export function IntegrationSidebar({
   supabaseConnected = false,
   convexConnected = false,
   tursoConnected = false,
+  planetscaleConnected = false,
 }: IntegrationSidebarProps) {
   const pathname = usePathname();
 
@@ -49,6 +57,7 @@ export function IntegrationSidebar({
     "/dashboard/integrations/supabase": supabaseConnected,
     "/dashboard/integrations/convex": convexConnected,
     "/dashboard/integrations/turso": tursoConnected,
+    "/dashboard/integrations/planetscale": planetscaleConnected,
   };
 
   return (
