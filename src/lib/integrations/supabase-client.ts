@@ -68,16 +68,23 @@ export async function testSupabaseConnection(
       },
     });
 
-    // Test connection by querying information_schema
-    const { error } = await client
-      .from("information_schema.tables")
-      .select("table_name")
-      .limit(1);
+    // Test connection using the REST API health check
+    // Supabase PostgREST doesn't expose information_schema, so we use a different approach
+    const response = await fetch(`${url}/rest/v1/`, {
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+      },
+    });
 
-    // If we get a "relation does not exist" error, the connection still works
-    // We just can't query information_schema directly via PostgREST
-    if (error && !error.message.includes("relation") && !error.message.includes("permission")) {
-      return { success: false, error: error.message };
+    // A 200 or 400 response means the server is reachable and credentials are valid
+    // 401 means invalid credentials
+    if (response.status === 401) {
+      return { success: false, error: "Invalid API key" };
+    }
+
+    if (!response.ok && response.status !== 400) {
+      return { success: false, error: `Server returned ${response.status}` };
     }
 
     return { success: true };

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSupabaseClientFromIntegration } from "@/lib/integrations/supabase-client";
+import { decrypt } from "@/lib/integrations/encryption";
 import {
   getCurrentUserId,
   validateIntegrationAccess,
@@ -26,67 +26,83 @@ export async function GET() {
     }
 
     const integration = await validateIntegrationAccess(userId, "supabase");
-    const client = createSupabaseClientFromIntegration(integration);
 
-    // Query tables from information_schema
-    const { data, error } = await client
-      .from("information_schema.tables")
-      .select("table_name, table_type")
-      .eq("table_schema", "public")
-      .order("table_name");
+    if (!integration.supabaseUrl || !integration.supabaseAnonKey) {
+      return NextResponse.json(
+        errorResponse("CONFIGURATION_ERROR", "Supabase credentials not configured"),
+        { status: 400 }
+      );
+    }
 
-    if (error) {
-      // Try alternative approach using RPC
-      const { data: rpcData, error: rpcError } = await client.rpc("exec_sql", {
-        query: `
-          SELECT 
-            t.table_name as name,
-            t.table_type as type,
-            COALESCE(s.n_live_tup, 0) as row_count
-          FROM information_schema.tables t
-          LEFT JOIN pg_stat_user_tables s ON s.relname = t.table_name
-          WHERE t.table_schema = 'public'
-          ORDER BY t.table_name
-        `,
-      });
+    const url = decrypt(integration.supabaseUrl);
+    const key = integration.supabaseServiceKey
+      ? decrypt(integration.supabaseServiceKey)
+      : decrypt(integration.supabaseAnonKey);
 
-      if (rpcError) {
+    // Use Supabase REST API to get tables via pg_catalog
+    // This works with both anon key and service key
+    const response = await fetch(
+      `${url}/rest/v1/rpc/get_tables`,
+      {
+        method: "POST",
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      }
+    );
+
+    if (!response.ok) {
+      // Fallback: use the Supabase Management API approach
+      // Try to get tables via a direct SQL query using the REST API
+      const sqlResponse = await fetch(
+        `${url}/rest/v1/`,
+        {
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+          },
+        }
+      );
+
+      if (!sqlResponse.ok) {
         return NextResponse.json(
-          errorResponse("QUERY_ERROR", "Failed to fetch tables: " + rpcError.message),
+          errorResponse("QUERY_ERROR", "Failed to fetch tables"),
           { status: 500 }
         );
       }
 
-      return NextResponse.json(
-        successResponse({
-          tables: (rpcData ?? []).map((t: Record<string, unknown>) => ({
-            name: t.name,
-            type: t.type === "BASE TABLE" ? "table" : "view",
-            rowCount: Number(t.row_count) || 0,
-          })),
-        })
-      );
+      // Parse the OpenAPI spec to get table names
+      const spec = await sqlResponse.json();
+      const paths = spec?.paths ?? {};
+      const tables = Object.keys(paths)
+        .filter((path) => path.startsWith("/") && !path.includes("{"))
+        .map((path) => ({
+          name: path.slice(1), // Remove leading /
+          type: "table",
+          rowCount: 0,
+        }))
+        .filter((t) => t.name && !t.name.startsWith("rpc/"));
+
+      await logIntegrationOperation({
+        userId,
+        provider: "supabase",
+        action: "query",
+        status: "success",
+        metadata: { action: "list_tables", count: tables.length },
+      });
+
+      return NextResponse.json(successResponse({ tables }));
     }
 
-    // Get row counts for each table
-    const tables = await Promise.all(
-      (data ?? []).map(async (table) => {
-        let rowCount = 0;
-        try {
-          const { count } = await client
-            .from(table.table_name)
-            .select("*", { count: "exact", head: true });
-          rowCount = count ?? 0;
-        } catch {
-          // Ignore count errors
-        }
-        return {
-          name: table.table_name,
-          type: table.table_type === "BASE TABLE" ? "table" : "view",
-          rowCount,
-        };
-      })
-    );
+    const data = await response.json();
+    const tables = (Array.isArray(data) ? data : []).map((t: Record<string, unknown>) => ({
+      name: String(t.table_name ?? t.name ?? ""),
+      type: String(t.table_type ?? "table") === "BASE TABLE" ? "table" : "view",
+      rowCount: Number(t.row_count ?? 0),
+    }));
 
     await logIntegrationOperation({
       userId,

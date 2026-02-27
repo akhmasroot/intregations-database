@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { decrypt } from "@/lib/integrations/encryption";
 import { createSupabaseClientFromIntegration } from "@/lib/integrations/supabase-client";
 import {
   getCurrentUserId,
@@ -25,7 +26,6 @@ export async function GET(request: NextRequest) {
     }
 
     const integration = await validateIntegrationAccess(userId, "supabase");
-    const client = createSupabaseClientFromIntegration(integration);
 
     const tableName = request.nextUrl.searchParams.get("table");
     if (!tableName) {
@@ -35,15 +35,53 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get column information
+    if (!integration.supabaseUrl || !integration.supabaseAnonKey) {
+      return NextResponse.json(
+        errorResponse("CONFIGURATION_ERROR", "Supabase credentials not configured"),
+        { status: 400 }
+      );
+    }
+
+    const url = decrypt(integration.supabaseUrl);
+    const key = integration.supabaseServiceKey
+      ? decrypt(integration.supabaseServiceKey)
+      : decrypt(integration.supabaseAnonKey);
+
+    // Get schema from Supabase REST API OpenAPI spec
+    const specResponse = await fetch(`${url}/rest/v1/`, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+    });
+
+    if (specResponse.ok) {
+      const spec = await specResponse.json();
+      const tableSpec = spec?.definitions?.[tableName];
+
+      if (tableSpec?.properties) {
+        const columns = Object.entries(tableSpec.properties).map(([colName, colSpec]) => {
+          const spec = colSpec as Record<string, unknown>;
+          return {
+            column_name: colName,
+            data_type: String(spec.type ?? spec.format ?? "text"),
+            is_nullable: "YES",
+            column_default: null,
+            is_primary_key: colName === "id",
+          };
+        });
+
+        return NextResponse.json(successResponse({ columns }));
+      }
+    }
+
+    // Fallback: try to get schema by selecting 0 rows and examining the response
+    // Use the Supabase client to get a row and infer schema
+    const client = createSupabaseClientFromIntegration(integration);
     const { data, error } = await client
-      .from("information_schema.columns")
-      .select(
-        "column_name, data_type, is_nullable, column_default, ordinal_position"
-      )
-      .eq("table_schema", "public")
-      .eq("table_name", tableName)
-      .order("ordinal_position");
+      .from(tableName)
+      .select("*")
+      .limit(1);
 
     if (error) {
       return NextResponse.json(
@@ -52,16 +90,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Primary key detection - simplified (id column is typically PK)
-    const primaryKeys = new Set<string>(["id"]);
+    // Infer columns from the first row or return empty
+    let columns: Array<{
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+      column_default: string | null;
+      is_primary_key: boolean;
+    }> = [];
 
-    const columns = (data ?? []).map((col) => ({
-      column_name: col.column_name,
-      data_type: col.data_type,
-      is_nullable: col.is_nullable,
-      column_default: col.column_default,
-      is_primary_key: primaryKeys.has(col.column_name),
-    }));
+    if (data && data.length > 0) {
+      columns = Object.entries(data[0]).map(([key, value]) => ({
+        column_name: key,
+        data_type: value === null ? "text" : typeof value === "number" ? "integer" : typeof value === "boolean" ? "boolean" : "text",
+        is_nullable: "YES",
+        column_default: null,
+        is_primary_key: key === "id",
+      }));
+    }
 
     return NextResponse.json(successResponse({ columns }));
   } catch (error) {
@@ -82,9 +128,16 @@ export async function POST(request: NextRequest) {
     }
 
     const integration = await validateIntegrationAccess(userId, "supabase");
-    
-    // Creating tables requires service key
-    const client = createSupabaseClientFromIntegration(integration, !!integration.supabaseServiceKey);
+
+    if (!integration.supabaseUrl || !integration.supabaseServiceKey) {
+      return NextResponse.json(
+        errorResponse("CONFIGURATION_ERROR", "Service Role Key is required to create tables"),
+        { status: 400 }
+      );
+    }
+
+    const url = decrypt(integration.supabaseUrl);
+    const serviceKey = decrypt(integration.supabaseServiceKey);
 
     const body = await request.json();
     const { tableName, columns } = body;
@@ -117,12 +170,21 @@ export async function POST(request: NextRequest) {
 
     const sql = `CREATE TABLE ${tableName} (\n  ${columnDefs.join(",\n  ")}\n);`;
 
-    // Execute via RPC
-    const { error } = await client.rpc("exec_sql", { query: sql });
+    // Execute via Supabase SQL API (requires service key)
+    const sqlResponse = await fetch(`${url}/rest/v1/rpc/exec_sql`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query: sql }),
+    });
 
-    if (error) {
+    if (!sqlResponse.ok) {
+      const errText = await sqlResponse.text();
       return NextResponse.json(
-        errorResponse("QUERY_ERROR", error.message),
+        errorResponse("QUERY_ERROR", `Failed to create table: ${errText}`),
         { status: 400 }
       );
     }
