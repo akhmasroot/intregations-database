@@ -111,8 +111,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { data, error } = await client.from(tableName).insert(body).select();
 
     if (error) {
+      // Provide helpful message for RLS violations
+      const message = error.message.includes("row-level security")
+        ? `Row Level Security (RLS) is blocking this operation. To bypass RLS, add your Service Role Key in the connection settings. Error: ${error.message}`
+        : error.message;
       return NextResponse.json(
-        errorResponse("QUERY_ERROR", error.message),
+        errorResponse("QUERY_ERROR", message),
         { status: 400 }
       );
     }
@@ -164,8 +168,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       .select();
 
     if (error) {
+      const message = error.message.includes("row-level security")
+        ? `Row Level Security (RLS) is blocking this operation. Add your Service Role Key to bypass RLS. Error: ${error.message}`
+        : error.message;
       return NextResponse.json(
-        errorResponse("QUERY_ERROR", error.message),
+        errorResponse("QUERY_ERROR", message),
         { status: 400 }
       );
     }
@@ -213,8 +220,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { error } = await client.from(tableName).delete().eq("id", id);
 
     if (error) {
+      const message = error.message.includes("row-level security")
+        ? `Row Level Security (RLS) is blocking this operation. Add your Service Role Key to bypass RLS. Error: ${error.message}`
+        : error.message;
       return NextResponse.json(
-        errorResponse("QUERY_ERROR", error.message),
+        errorResponse("QUERY_ERROR", message),
         { status: 400 }
       );
     }
