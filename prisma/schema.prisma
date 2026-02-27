@@ -1,0 +1,50 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model UserIntegration {
+  id            String    @id @default(cuid())
+  userId        String    
+  provider      String    // 'supabase' | 'convex'
+  
+  // Supabase fields
+  supabaseUrl        String?  // encrypted
+  supabaseAnonKey    String?  // encrypted  
+  supabaseServiceKey String?  // encrypted (optional, for admin operations)
+  supabaseProjectRef String?
+  
+  // Convex fields
+  convexAccessToken   String?  // encrypted (from OAuth)
+  convexRefreshToken  String?  // encrypted
+  convexDeploymentUrl String?
+  convexProjectId     String?
+  
+  connectedAt   DateTime  @default(now())
+  lastUsedAt    DateTime?
+  isActive      Boolean   @default(true)
+  
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+model UserIntegrationLog {
+  id            String    @id @default(cuid())
+  userId        String
+  provider      String
+  action        String    // 'connect', 'disconnect', 'query', 'insert', 'update', 'delete', 'create_table'
+  tableName     String?
+  status        String    // 'success' | 'error'
+  errorMessage  String?
+  metadata      String?   // JSON string for additional info
+  createdAt     DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([userId, provider])
+}
