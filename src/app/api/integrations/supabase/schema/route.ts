@@ -193,7 +193,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Try Supabase Management API
+    // Try Supabase Management API for DDL
     const mgmtResponse = await fetch(
       `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
       {
@@ -206,30 +206,50 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    if (!mgmtResponse.ok) {
-      const errData = await mgmtResponse.json().catch(() => ({ message: "Unknown error" }));
-      
-      // If Management API fails, return the SQL for manual execution
+    if (mgmtResponse.ok) {
+      await logIntegrationOperation({
+        userId,
+        provider: "supabase",
+        action: "create_table",
+        tableName,
+        status: "success",
+      });
       return NextResponse.json(
-        successResponse({
-          message: `Table creation via API failed. Please run this SQL manually in your Supabase SQL Editor:`,
-          sql,
-          manualRequired: true,
-          error: errData?.message ?? "Management API not accessible with current credentials",
-        })
+        successResponse({ message: `Table "${tableName}" created successfully`, sql })
       );
     }
 
-    await logIntegrationOperation({
-      userId,
-      provider: "supabase",
-      action: "create_table",
-      tableName,
-      status: "success",
+    // Try pg endpoint
+    const pgResponse = await fetch(`${url}/pg/query`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query: sql }),
     });
 
+    if (pgResponse.ok) {
+      await logIntegrationOperation({
+        userId,
+        provider: "supabase",
+        action: "create_table",
+        tableName,
+        status: "success",
+      });
+      return NextResponse.json(
+        successResponse({ message: `Table "${tableName}" created successfully`, sql })
+      );
+    }
+
+    // Return SQL for use in the SQL Editor tab (within our dashboard)
     return NextResponse.json(
-      successResponse({ message: `Table "${tableName}" created successfully`, sql })
+      successResponse({
+        message: `SQL ready! Go to the SQL Editor tab and click Run Query to create the table.`,
+        sql,
+        useEditor: true,
+      })
     );
   } catch (error) {
     return NextResponse.json(

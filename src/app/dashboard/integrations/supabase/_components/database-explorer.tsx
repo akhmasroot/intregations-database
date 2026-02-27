@@ -101,6 +101,15 @@ export function DatabaseExplorer({ hasServiceKey = false }: DatabaseExplorerProp
     fetchSchema(tableName);
   };
 
+  // Listen for SQL editor open event from table creator
+  useEffect(() => {
+    const handleOpenSqlEditor = () => {
+      setActiveTab("sql");
+    };
+    window.addEventListener("open-sql-editor", handleOpenSqlEditor);
+    return () => window.removeEventListener("open-sql-editor", handleOpenSqlEditor);
+  }, []);
+
   return (
     <div className="flex h-full">
       {/* Left Panel - Table List */}

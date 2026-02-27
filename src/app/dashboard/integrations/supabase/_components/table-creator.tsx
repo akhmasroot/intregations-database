@@ -113,18 +113,23 @@ export function TableCreator({ onTableCreated, children }: TableCreatorProps) {
       const result = await response.json();
 
       if (result.success) {
-        if (result.data?.manualRequired) {
-          // Show the SQL for manual execution
+        if (result.data?.useEditor) {
+          // Redirect to SQL editor with the SQL pre-filled
           toast.info(
-            `Auto-creation failed. Please run this SQL in your Supabase SQL Editor:\n\n${result.data.sql}`,
-            { duration: 10000 }
+            "Direct creation not available. Opening SQL Editor with the CREATE TABLE statement...",
+            { duration: 3000 }
           );
-          // Copy SQL to clipboard
+          // Store SQL in sessionStorage for the SQL editor to pick up
           if (result.data.sql) {
-            navigator.clipboard.writeText(result.data.sql).catch(() => {});
-            toast.success("SQL copied to clipboard! Paste it in Supabase SQL Editor.");
+            sessionStorage.setItem("supabase_pending_sql", result.data.sql);
+            toast.success(
+              "SQL ready! Go to the SQL Editor tab and click Run Query to create the table.",
+              { duration: 8000 }
+            );
           }
           setOpen(false);
+          // Trigger navigation to SQL editor tab
+          window.dispatchEvent(new CustomEvent("open-sql-editor", { detail: { sql: result.data.sql } }));
         } else {
           toast.success(`Table "${data.tableName}" created successfully!`);
           setOpen(false);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseClientFromIntegration } from "@/lib/integrations/supabase-client";
+import { decrypt } from "@/lib/integrations/encryption";
 import {
   getCurrentUserId,
   validateIntegrationAccess,
@@ -26,7 +26,13 @@ export async function POST(request: NextRequest) {
 
     const integration = await validateIntegrationAccess(userId, "supabase");
     const hasServiceKey = !!integration.supabaseServiceKey;
-    const client = createSupabaseClientFromIntegration(integration, hasServiceKey);
+
+    if (!integration.supabaseUrl || !integration.supabaseAnonKey) {
+      return NextResponse.json(
+        errorResponse("CONFIGURATION_ERROR", "Supabase credentials not configured"),
+        { status: 400 }
+      );
+    }
 
     const body = await request.json();
     const { query } = body;
@@ -40,58 +46,127 @@ export async function POST(request: NextRequest) {
 
     // Security: restrict to SELECT queries if no service key
     const trimmedQuery = query.trim().toUpperCase();
-    if (
-      !hasServiceKey &&
-      !trimmedQuery.startsWith("SELECT") &&
+    const isWriteQuery = !trimmedQuery.startsWith("SELECT") &&
       !trimmedQuery.startsWith("WITH") &&
-      !trimmedQuery.startsWith("EXPLAIN")
-    ) {
+      !trimmedQuery.startsWith("EXPLAIN");
+
+    if (isWriteQuery && !hasServiceKey) {
       return NextResponse.json(
         errorResponse(
           "UNAUTHORIZED",
-          "Only SELECT queries are allowed without a Service Role Key"
+          "Only SELECT queries are allowed without a Service Role Key. Add a Service Role Key to run DDL/DML queries."
         ),
         { status: 403 }
       );
     }
 
+    const url = decrypt(integration.supabaseUrl);
+    const key = hasServiceKey
+      ? decrypt(integration.supabaseServiceKey!)
+      : decrypt(integration.supabaseAnonKey);
+
+    // Extract project ref for Management API
+    const projectRef = url.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1];
+
     const startTime = Date.now();
 
-    // Execute via RPC
-    const { data, error } = await client.rpc("exec_sql", { query });
+    // Try Supabase Management API for DDL queries (CREATE, ALTER, DROP, etc.)
+    if (isWriteQuery && projectRef) {
+      const mgmtResponse = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query }),
+        }
+      );
+
+      const executionTime = Date.now() - startTime;
+
+      if (mgmtResponse.ok) {
+        const data = await mgmtResponse.json();
+        await logIntegrationOperation({
+          userId,
+          provider: "supabase",
+          action: "query",
+          status: "success",
+          metadata: { executionTime },
+        });
+        return NextResponse.json(
+          successResponse({
+            data: Array.isArray(data) ? data : [data],
+            rowCount: Array.isArray(data) ? data.length : 1,
+            executionTime,
+          })
+        );
+      }
+    }
+
+    // For SELECT queries, use PostgREST with a workaround
+    // Supabase doesn't support raw SQL via PostgREST, but we can use the pg endpoint
+    const pgResponse = await fetch(`${url}/pg/query`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+    });
 
     const executionTime = Date.now() - startTime;
 
-    if (error) {
+    if (pgResponse.ok) {
+      const data = await pgResponse.json();
       await logIntegrationOperation({
         userId,
         provider: "supabase",
         action: "query",
-        status: "error",
-        errorMessage: error.message,
-        metadata: { query: query.slice(0, 200) },
+        status: "success",
+        metadata: { executionTime },
       });
-
       return NextResponse.json(
-        errorResponse("QUERY_ERROR", error.message),
-        { status: 400 }
+        successResponse({
+          data: Array.isArray(data) ? data : [data],
+          rowCount: Array.isArray(data) ? data.length : 1,
+          executionTime,
+        })
       );
     }
 
-    await logIntegrationOperation({
-      userId,
-      provider: "supabase",
-      action: "query",
-      status: "success",
-      metadata: { executionTime, rowCount: Array.isArray(data) ? data.length : 0 },
+    // Last resort: try the REST API with a simple select
+    // For SELECT queries, we can use the Supabase client
+    const { createClient } = await import("@supabase/supabase-js");
+    const client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
     });
 
+    // For simple SELECT queries, try to parse the table name and use the client
+    const tableMatch = query.match(/FROM\s+"?(\w+)"?/i);
+    if (tableMatch && trimmedQuery.startsWith("SELECT")) {
+      const tableName = tableMatch[1];
+      const { data, error } = await client.from(tableName).select("*").limit(100);
+
+      if (!error) {
+        return NextResponse.json(
+          successResponse({
+            data: data ?? [],
+            rowCount: data?.length ?? 0,
+            executionTime: Date.now() - startTime,
+          })
+        );
+      }
+    }
+
     return NextResponse.json(
-      successResponse({
-        data: Array.isArray(data) ? data : [data],
-        rowCount: Array.isArray(data) ? data.length : 1,
-        executionTime,
-      })
+      errorResponse(
+        "QUERY_ERROR",
+        "Could not execute query. For DDL queries (CREATE TABLE, etc.), a Service Role Key with Management API access is required."
+      ),
+      { status: 400 }
     );
   } catch (error) {
     return NextResponse.json(

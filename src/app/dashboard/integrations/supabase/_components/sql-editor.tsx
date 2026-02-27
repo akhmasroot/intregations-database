@@ -95,6 +95,24 @@ export function SqlEditor({ hasServiceKey = false }: SqlEditorProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [runQuery]);
 
+  // Listen for SQL from table creator
+  useEffect(() => {
+    const handleOpenSqlEditor = (e: Event) => {
+      const customEvent = e as CustomEvent<{ sql: string }>;
+      if (customEvent.detail?.sql) {
+        setQuery(customEvent.detail.sql);
+      }
+    };
+    // Also check sessionStorage on mount
+    const pendingSql = sessionStorage.getItem("supabase_pending_sql");
+    if (pendingSql) {
+      setQuery(pendingSql);
+      sessionStorage.removeItem("supabase_pending_sql");
+    }
+    window.addEventListener("open-sql-editor", handleOpenSqlEditor);
+    return () => window.removeEventListener("open-sql-editor", handleOpenSqlEditor);
+  }, []);
+
   const exportCSV = () => {
     if (!result?.data.length) return;
     const columns = Object.keys(result.data[0]);
