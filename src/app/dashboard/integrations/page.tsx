@@ -22,27 +22,29 @@ interface IntegrationRecord {
   convexProjectId: string | null;
   tursoDatabaseName: string | null;
   planetscaleDatabaseName: string | null;
+  neonDatabaseName: string | null;
 }
 
 async function getIntegrationStatuses(userId: string) {
   const integrations = await db.userIntegration.findMany({
     where: { userId, isActive: true },
-    select: { provider: true, connectedAt: true, supabaseProjectRef: true, convexProjectId: true, tursoDatabaseName: true, planetscaleDatabaseName: true },
+    select: { provider: true, connectedAt: true, supabaseProjectRef: true, convexProjectId: true, tursoDatabaseName: true, planetscaleDatabaseName: true, neonDatabaseName: true },
   }) as IntegrationRecord[];
 
   const supabase = integrations.find((i) => i.provider === "supabase");
   const convex = integrations.find((i) => i.provider === "convex");
   const turso = integrations.find((i) => i.provider === "turso");
   const planetscale = integrations.find((i) => i.provider === "planetscale");
+  const neon = integrations.find((i) => i.provider === "neon");
 
-  return { supabase, convex, turso, planetscale };
+  return { supabase, convex, turso, planetscale, neon };
 }
 
 export default async function IntegrationsPage() {
   const userId = await getCurrentUserId();
-  const { supabase, convex, turso, planetscale } = userId
+  const { supabase, convex, turso, planetscale, neon } = userId
     ? await getIntegrationStatuses(userId)
-    : { supabase: null, convex: null, turso: null, planetscale: null };
+    : { supabase: null, convex: null, turso: null, planetscale: null, neon: null };
 
   const providers = [
     {
@@ -105,6 +107,21 @@ export default async function IntegrationsPage() {
       badges: ["API Token"],
       accentColor: "border-purple-500/20 hover:border-purple-500/40",
     },
+    {
+      id: "neon",
+      name: "Neon",
+      description:
+        "Serverless PostgreSQL with autoscaling, branching, and a generous free tier. Built for modern cloud-native apps.",
+      href: "/dashboard/integrations/neon",
+      icon: Database,
+      iconColor: "text-green-400",
+      iconBg: "bg-green-500/10",
+      isConnected: !!neon,
+      connectedAt: neon?.connectedAt,
+      features: ["Serverless Postgres", "Autoscaling", "Branching", "Free tier"],
+      badges: ["Connection String"],
+      accentColor: "border-green-500/20 hover:border-green-500/40",
+    },
   ];
 
   return (
@@ -114,6 +131,7 @@ export default async function IntegrationsPage() {
         convexConnected={!!convex}
         tursoConnected={!!turso}
         planetscaleConnected={!!planetscale}
+        neonConnected={!!neon}
       />
 
       <main className="flex-1 p-8">
@@ -238,7 +256,7 @@ export default async function IntegrationsPage() {
           {[
             {
               label: "Connected Databases",
-              value: [supabase, convex, turso, planetscale].filter(Boolean).length,
+              value: [supabase, convex, turso, planetscale, neon].filter(Boolean).length,
               icon: Database,
             },
             {
@@ -248,7 +266,7 @@ export default async function IntegrationsPage() {
             },
             {
               label: "Supported Providers",
-              value: "4",
+              value: "5",
               icon: Layers,
             },
           ].map((stat) => {

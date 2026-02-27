@@ -36,6 +36,12 @@ const navItems = [
     icon: Database,
     description: "MySQL-compatible cloud DB",
   },
+  {
+    label: "Neon",
+    href: "/dashboard/integrations/neon",
+    icon: Database,
+    description: "Serverless PostgreSQL",
+  },
 ];
 
 interface IntegrationSidebarProps {
@@ -43,6 +49,7 @@ interface IntegrationSidebarProps {
   convexConnected?: boolean;
   tursoConnected?: boolean;
   planetscaleConnected?: boolean;
+  neonConnected?: boolean;
 }
 
 export function IntegrationSidebar({
@@ -50,6 +57,7 @@ export function IntegrationSidebar({
   convexConnected = false,
   tursoConnected = false,
   planetscaleConnected = false,
+  neonConnected = false,
 }: IntegrationSidebarProps) {
   const pathname = usePathname();
 
@@ -58,6 +66,7 @@ export function IntegrationSidebar({
     "/dashboard/integrations/convex": convexConnected,
     "/dashboard/integrations/turso": tursoConnected,
     "/dashboard/integrations/planetscale": planetscaleConnected,
+    "/dashboard/integrations/neon": neonConnected,
   };
 
   return (

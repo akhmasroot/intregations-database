@@ -37,6 +37,11 @@ model UserIntegration {
   planetscalePassword String?  // encrypted
   planetscaleDatabaseName String?
   
+  // Neon fields
+  neonConnectionString String?  // encrypted (postgresql://user:pass@host/db?sslmode=require)
+  neonProjectId        String?
+  neonDatabaseName     String?
+  
   connectedAt   DateTime  @default(now())
   lastUsedAt    DateTime?
   isActive      Boolean   @default(true)

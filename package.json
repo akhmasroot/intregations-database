@@ -12,6 +12,7 @@
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@libsql/client": "^0.17.0",
+    "@neondatabase/serverless": "^1.0.2",
     "@planetscale/database": "^1.19.0",
     "@prisma/adapter-libsql": "^7.4.2",
     "@prisma/client": "^7.4.2",
