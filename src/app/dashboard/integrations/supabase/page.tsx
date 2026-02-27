@@ -22,6 +22,8 @@ async function getSupabaseIntegration(userId: string) {
       connectedAt: true,
       supabaseProjectRef: true,
       supabaseServiceKey: true,
+      supabaseUrl: true,
+      supabaseAnonKey: true,
     },
   });
 }
@@ -31,10 +33,12 @@ export default async function SupabaseDashboardPage() {
   const integration = userId ? await getSupabaseIntegration(userId) : null;
   const isConnected = !!integration?.isActive;
   const hasServiceKey = !!integration?.supabaseServiceKey;
+  // Check if credentials are fully configured (URL + key required for API calls)
+  const isFullyConfigured = isConnected && !!integration?.supabaseUrl && !!integration?.supabaseAnonKey;
 
   return (
     <div className="flex min-h-screen bg-background dark">
-      <IntegrationSidebar supabaseConnected={isConnected} />
+      <IntegrationSidebar supabaseConnected={isFullyConfigured} />
 
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -59,12 +63,12 @@ export default async function SupabaseDashboardPage() {
               </div>
             </div>
             <ConnectionStatusBadge
-              status={isConnected ? "connected" : "disconnected"}
+              status={isFullyConfigured ? "connected" : isConnected ? "connecting" : "disconnected"}
             />
           </div>
 
           <div className="flex items-center gap-2">
-            {isConnected && (
+            {isFullyConfigured && (
               <Button variant="outline" size="sm" asChild>
                 <a
                   href="https://supabase.com/dashboard"
@@ -81,7 +85,7 @@ export default async function SupabaseDashboardPage() {
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {isConnected ? (
+          {isFullyConfigured ? (
             <DatabaseExplorer hasServiceKey={hasServiceKey} />
           ) : (
             <div className="flex items-center justify-center h-full p-8">
@@ -90,13 +94,26 @@ export default async function SupabaseDashboardPage() {
                   <div className="inline-flex p-3 rounded-full bg-emerald-500/10 mb-4">
                     <Database className="h-8 w-8 text-emerald-400" />
                   </div>
-                  <h2 className="text-xl font-semibold">
-                    Connect Your Supabase Project
-                  </h2>
-                  <p className="text-muted-foreground text-sm mt-2">
-                    Connect your Supabase project to explore tables, run
-                    queries, and manage data directly from this dashboard.
-                  </p>
+                  {isConnected && !isFullyConfigured ? (
+                    <>
+                      <h2 className="text-xl font-semibold">
+                        Complete Your Supabase Setup
+                      </h2>
+                      <p className="text-muted-foreground text-sm mt-2">
+                        OAuth connected! Now please provide your Supabase Project URL and API Key to enable database access.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="text-xl font-semibold">
+                        Connect Your Supabase Project
+                      </h2>
+                      <p className="text-muted-foreground text-sm mt-2">
+                        Connect your Supabase project to explore tables, run
+                        queries, and manage data directly from this dashboard.
+                      </p>
+                    </>
+                  )}
                 </div>
                 <SupabaseConnectForm />
               </div>
